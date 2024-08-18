@@ -1,0 +1,187 @@
+import discord
+import requests
+import io
+import asyncio
+from datetime import datetime, timedelta
+
+TOKEN = 'YOUR TOKEN HERE'
+ESP32_URL = ''  # Replace with your ESP32-CAM IP address (IF YOU HAVE IP-FORWARDED THE ESP32-CAM IP ADRESS, THEN REPLACE WITH YOUR NETWORKS IP4-IP ADRESS )
+
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
+
+# Global bot state
+bot_active = False  # Initially set to False, so !please must be issued
+last_armin_time = None  # Track the last time !armin was used
+command_interval = timedelta(days=30)  # Set the cooldown to 30 days
+reset_interval = timedelta(days=1)
+target_channel_id = 1271943506843275428  # Replace with your target channel ID
+
+# Define admin user IDs (Replace with actual user IDs)
+ADMIN_USER_IDS = {417682141741056010, 219857231905030144}  # Added new admin user ID
+
+async def reset_command_counts():
+    while True:
+        await asyncio.sleep(reset_interval.total_seconds())
+        print("Command counts reset.")
+
+async def scheduled_photo_task():
+    while True:
+        if bot_active:
+            now = datetime.now()
+            next_times = [now.replace(hour=h, minute=0, second=0, microsecond=0) for h in [6, 9, 12, 15, 18, 21, 0]]
+            next_times = [nt if nt > now else nt + timedelta(days=1) for nt in next_times]
+            next_capture_time = min(next_times)
+
+            wait_time = (next_capture_time - now).total_seconds()
+            print(f"Next photo capture scheduled at: {next_capture_time}")
+            await asyncio.sleep(wait_time)
+
+            try:
+                print('Attempting to capture an image')
+
+                # Fetch image from ESP32
+                response = requests.get(ESP32_URL)
+                if response.status_code == 200:
+                    print('Image captured successfully from ESP32')
+
+                    # Convert image to a file-like object
+                    image_file = io.BytesIO(response.content)
+
+                    # Send the image to the specified channel
+                    channel = client.get_channel(target_channel_id)
+                    if channel:
+                        await channel.send("Scheduled image:", file=discord.File(image_file, 'image.jpg'))
+                    else:
+                        print(f"Channel with ID {target_channel_id} not found.")
+                else:
+                    print(f'Failed to capture image from ESP32. Status code: {response.status_code}')
+            except Exception as e:
+                print(f'An error occurred: {e}')
+        else:
+            # If the bot is not active, wait a short time before checking again
+            await asyncio.sleep(60)
+
+@client.event
+async def on_ready():
+    print(f'Logged in as {client.user}')
+    # Start the reset and scheduled photo coroutines after the bot is ready
+    client.loop.create_task(reset_command_counts())
+    client.loop.create_task(scheduled_photo_task())
+
+@client.event
+async def on_message(message):
+    global bot_active, last_armin_time
+
+    if message.author == client.user:
+        return
+
+    current_time = datetime.now()
+
+    # Handle the !please command (Admin only)
+    if message.content == '!please':
+        if message.author.id not in ADMIN_USER_IDS:
+            await message.channel.send("You do not have permission to use this command.")
+            return
+
+        if bot_active:
+            await message.channel.send("Bot is already active.")
+        else:
+            bot_active = True
+            await message.channel.send("Bot is now active and ready to accept commands!")
+        return
+
+    # Handle the !terminate command (Admin only)
+    if message.content == '!terminate':
+        if message.author.id not in ADMIN_USER_IDS:
+            await message.channel.send("You do not have permission to use this command.")
+            return
+
+        if not bot_active:
+            await message.channel.send("Bot is already terminated.")
+        else:
+            bot_active = False
+            await message.channel.send("Bot has been terminated and will not accept further commands.")
+        return
+
+    # Handle the !armin command (global with 30 days cooldown)
+    if message.content == '!armin':
+        if not bot_active:
+            await message.channel.send("The bot is currently inactive. Please use !please to activate it.")
+            return
+
+        # Check the last time the !armin command was issued globally
+        if last_armin_time and current_time - last_armin_time < command_interval:
+            remaining_time = (command_interval - (current_time - last_armin_time)).total_seconds()
+            days, remainder = divmod(remaining_time, 86400)  # 86400 seconds in a day
+            hours, remainder = divmod(remainder, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            await message.channel.send(f"The command was already used recently. Please wait {int(days)}d {int(hours)}h {int(minutes)}m before using !armin again.")
+            return
+
+        last_armin_time = current_time
+
+        try:
+            print(f'Received !armin command from {message.author}')
+
+            # Fetch image from ESP32
+            response = requests.get(ESP32_URL)
+            if response.status_code == 200:
+                print('Image captured successfully from ESP32')
+
+                # Convert image to a file-like object
+                image_file = io.BytesIO(response.content)
+
+                # Send the image in the same channel where the command was issued
+                await message.channel.send("Here is the image:", file=discord.File(image_file, 'image.jpg'))
+
+                # Notify when the command is available again
+                await asyncio.sleep(command_interval.total_seconds())
+                await message.channel.send("The !armin command is ready to use again.")
+            else:
+                print(f'Failed to capture image from ESP32. Status code: {response.status_code}')
+                await message.channel.send("Failed to capture image from ESP32.")
+        except Exception as e:
+            print(f'An error occurred: {e}')
+            await message.channel.send(f"An error occurred: {e}")
+
+    # Handle the !admin command (Admin only, bypasses 30 days cooldown)
+    if message.content == '!admin':
+        if message.author.id not in ADMIN_USER_IDS:
+            await message.channel.send("You do not have permission to use this command.")
+            return
+
+        if not bot_active:
+            await message.channel.send("The bot is currently inactive. Please use !please to activate it.")
+            return
+
+        try:
+            print(f'Received !admin command from {message.author}')
+
+            # Fetch image from ESP32
+            response = requests.get(ESP32_URL)
+            if response.status_code == 200:
+                print('Image captured successfully from ESP32')
+
+                # Convert image to a file-like object
+                image_file = io.BytesIO(response.content)
+
+                # Send the image in the same channel where the command was issued
+                await message.channel.send("Here is the admin-captured image:", file=discord.File(image_file, 'image.jpg'))
+            else:
+                print(f'Failed to capture image from ESP32. Status code: {response.status_code}')
+                await message.channel.send("Failed to capture image from ESP32.")
+        except Exception as e:
+            print(f'An error occurred: {e}')
+            await message.channel.send(f"An error occurred: {e}")
+
+    # Handle the !GROMBA command (sends a specific image link)
+    if message.content == '!GROMBA':
+        await message.channel.send("Here is the image you requested: https://cdn.discordapp.com/attachments/1271943506843275428/1272603463284555857/image.png?ex=66bb93d5&is=66ba4255&hm=a285a68a9ef39ae7d31df3decedcb08eb6ad70517f6ce1e24707b4f7e59ea734&")
+
+async def main():
+    await client.start(TOKEN)
+
+# Run the bot with asyncio.run to properly handle the asynchronous tasks
+asyncio.run(main())
