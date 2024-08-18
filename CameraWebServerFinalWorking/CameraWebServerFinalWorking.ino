@@ -8,8 +8,8 @@
 #include "camera_pins.h"
 
 // WiFi credentials
-const char* ssid = "Zyxel_2AF1";
-const char* password = "XR3YLXHNYE";
+const char* ssid = "WIFI_NAME";
+const char* password = "WIFI_PASS";
 
 // Flash LED pin definition
 #define FLASH_LED_PIN 4
