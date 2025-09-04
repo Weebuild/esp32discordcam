@@ -1,5 +1,3 @@
-Got it 👍 here’s the entire README.md as one single Markdown block — no splitting, everything continuous:
-
 # Discord ESP32-CAM Bot
 
 This is a Discord bot that connects to an ESP32-CAM and sends images to a Discord channel either on-demand (!armin, !admin) or on a scheduled basis (every 3 hours). The bot includes admin-only commands, cooldown timers, and scheduled tasks.
